@@ -61,6 +61,22 @@ function ScoreBar({ score, color, animate }) {
   );
 }
 
+// Secure proxy call — API key never exposed to browser
+async function callAI(prompt) {
+  const response = await fetch('/api/analyse', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      model: 'claude-sonnet-4-20250514',
+      max_tokens: 1000,
+      messages: [{ role: 'user', content: prompt }],
+    }),
+  });
+  const data = await response.json();
+  const text = data.content?.map(b => b.text || '').join('') || '';
+  return JSON.parse(text.replace(/```json|```/g, '').trim());
+}
+
 async function analyseWithClaude(videoInfo, userHook) {
   const hookSection = userHook ? `\nAlso score this specific hook: "${userHook}"` : "";
   const prompt = `You are a short-form video strategist. A creator uploaded:
@@ -94,15 +110,7 @@ Respond ONLY with JSON (no markdown):
   ],
   "userHookScore": ${userHook ? '{ "score": 0-100, "label": "Weak|Fair|Good|Strong|Viral", "tip": "one sentence" }' : 'null'}
 }`;
-
-  const response = await fetch("https://api.anthropic.com/v1/messages", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ model: "claude-sonnet-4-20250514", max_tokens: 1000, messages: [{ role: "user", content: prompt }] }),
-  });
-  const data = await response.json();
-  const text = data.content?.map(b => b.text || "").join("") || "";
-  return JSON.parse(text.replace(/```json|```/g, "").trim());
+  return callAI(prompt);
 }
 
 async function optimiseForPlatform(videoInfo, targetPlatform, currentScore, niche) {
@@ -113,8 +121,6 @@ Video details:
 - Niche: ${niche}
 - Upload type: ${videoInfo.uploadType === "raw" ? "Raw footage" : "Final edited video"}
 - Duration: ${videoInfo.duration}
-
-Give them a specific optimisation plan to maximise performance on ${targetPlatform.name} specifically.
 
 Respond ONLY with JSON (no markdown):
 {
@@ -129,15 +135,7 @@ Respond ONLY with JSON (no markdown):
   "bestPostingTime": "specific day and time recommendation",
   "projectedLift": 0-25
 }`;
-
-  const response = await fetch("https://api.anthropic.com/v1/messages", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ model: "claude-sonnet-4-20250514", max_tokens: 1000, messages: [{ role: "user", content: prompt }] }),
-  });
-  const data = await response.json();
-  const text = data.content?.map(b => b.text || "").join("") || "";
-  return JSON.parse(text.replace(/```json|```/g, "").trim());
+  return callAI(prompt);
 }
 
 const READY_THRESHOLD = 75;
@@ -253,7 +251,6 @@ export default function ReelIQ() {
     <div style={{ fontFamily: "'DM Sans','Helvetica Neue',sans-serif", maxWidth: 940, margin: "0 auto", padding: "1.5rem 1rem" }}>
       <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,wght@0,400;0,500;0,600;1,400&display=swap" rel="stylesheet" />
 
-      {/* Header */}
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "1.75rem" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
           <div style={{ width: 32, height: 32, borderRadius: 10, background: "#534AB7", display: "flex", alignItems: "center", justifyContent: "center" }}>
@@ -264,7 +261,6 @@ export default function ReelIQ() {
         <span style={{ fontSize: 11, background: "#EEEDFE", color: "#3C3489", padding: "3px 10px", borderRadius: 20, fontWeight: 500 }}>Beta</span>
       </div>
 
-      {/* Ready to post banner */}
       {results && isReadyToPost && (
         <div style={{ background: "#E1F5EE", border: "1px solid #9FE1CB", borderRadius: 12, padding: "14px 18px", marginBottom: 14, display: "flex", alignItems: "center", gap: 12 }}>
           <div style={{ width: 32, height: 32, borderRadius: "50%", background: "#0F6E56", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
@@ -282,9 +278,8 @@ export default function ReelIQ() {
         </div>
       )}
 
-      {/* Second analysis improvement banner */}
       {results && analyseCount > 1 && previousScore && !isReadyToPost && (
-        <div style={{ background: "#EEEDFE", border: "1px solid #CECBF6", borderRadius: 12, padding: "12px 18px", marginBottom: 14, display: "flex", alignItems: "center", gap: 12 }}>
+        <div style={{ background: "#EEEDFE", border: "1px solid #CECBF6", borderRadius: 12, padding: "12px 18px", marginBottom: 14 }}>
           <div style={{ fontSize: 13, color: "#3C3489" }}>
             {topScore > previousScore
               ? `Score improved from ${previousScore}% → ${topScore}%. Keep going — one more round of edits should get you there.`
@@ -293,7 +288,6 @@ export default function ReelIQ() {
         </div>
       )}
 
-      {/* Upload type selector */}
       <div style={{ ...card, marginBottom: 14 }}>
         <div style={sectionLabel}>What are you uploading?</div>
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
@@ -318,7 +312,6 @@ export default function ReelIQ() {
       </div>
 
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
-        {/* LEFT */}
         <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
           <div style={card}>
             <div style={sectionLabel}>{isFinal ? "Upload your final edit" : "Upload your raw footage"}</div>
@@ -411,13 +404,12 @@ export default function ReelIQ() {
           )}
         </div>
 
-        {/* RIGHT */}
         <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
           <div style={card}>
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
               <div style={sectionLabel}>Platform fit</div>
               {results && !isReadyToPost && (
-                <button onClick={() => { setShowOptimise(!showOptimise); setOptimisationResult(null); }} style={{ fontSize: 11, color: showOptimise ? "#fff" : "#534AB7", background: showOptimise ? "#534AB7" : "#EEEDFE", border: "none", borderRadius: 20, padding: "4px 12px", cursor: "pointer", fontWeight: 500, transition: "all 0.15s" }}>
+                <button onClick={() => { setShowOptimise(!showOptimise); setOptimisationResult(null); }} style={{ fontSize: 11, color: showOptimise ? "#fff" : "#534AB7", background: showOptimise ? "#534AB7" : "#EEEDFE", border: "none", borderRadius: 20, padding: "4px 12px", cursor: "pointer", fontWeight: 500 }}>
                   {showOptimise ? "Back to scores" : "Optimise for a platform"}
                 </button>
               )}
@@ -481,7 +473,6 @@ export default function ReelIQ() {
                     );
                   })}
                 </div>
-
                 <button onClick={runOptimisation} disabled={!optimiseTarget || optimising}
                   style={{ width: "100%", background: !optimiseTarget ? "rgba(128,128,128,0.15)" : "#534AB7", color: !optimiseTarget ? "#888" : "#fff", border: "none", borderRadius: 8, padding: "11px", fontSize: 13, fontWeight: 500, cursor: !optimiseTarget ? "not-allowed" : "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8, marginBottom: optimisationResult ? 14 : 0 }}>
                   {optimising ? (<><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round"><path d="M21 12a9 9 0 1 1-6.219-8.56"><animateTransform attributeName="transform" type="rotate" from="0 12 12" to="360 12 12" dur="1s" repeatCount="indefinite"/></path></svg>Optimising...</>) : optimiseTarget ? `Optimise for ${PLATFORMS.find(p => p.id === optimiseTarget)?.short}` : "Select a platform above"}
@@ -493,7 +484,7 @@ export default function ReelIQ() {
                       <div style={{ fontSize: 11, color: "#888", marginBottom: 6, fontWeight: 500, textTransform: "uppercase", letterSpacing: "0.5px" }}>Platform insight</div>
                       <div style={{ fontSize: 12, color: "#1a1a1a", lineHeight: 1.6 }}>{optimisationResult.platformTip}</div>
                       {optimisationResult.projectedLift > 0 && (
-                        <div style={{ marginTop: 8, display: "flex", alignItems: "center", gap: 6 }}>
+                        <div style={{ marginTop: 8 }}>
                           <span style={{ background: "#E1F5EE", color: "#0F6E56", fontSize: 11, padding: "2px 8px", borderRadius: 20, fontWeight: 500 }}>+{optimisationResult.projectedLift}% projected lift</span>
                         </div>
                       )}
@@ -539,7 +530,6 @@ export default function ReelIQ() {
             )}
           </div>
 
-          {/* Hooks */}
           <div style={card}>
             <div style={sectionLabel}>Hook suggestions</div>
             <div style={{ display: "flex", gap: 6, marginBottom: 14 }}>
