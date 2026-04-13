@@ -695,4 +695,3 @@ export default function ReelIQ() {
   );
 }
 
-export default App;
