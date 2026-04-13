@@ -7,6 +7,14 @@ const PLATFORMS = [
   { id: "facebook", name: "Facebook Reels", short: "Facebook" },
 ];
 
+const INSIGHTS_INFO = {
+  "Niche": "The content category your video belongs to based on its style, subject, and description.",
+  "Pace": "How frequently your video cuts between shots. Faster pacing typically performs better on TikTok and Reels.",
+  "Hook strength": "How strong your opening is. Your hook is the first 3 seconds of your video — it determines whether a viewer keeps watching or scrolls past.",
+  "Audio trend": "Whether the sound or music in your video is currently trending on that platform. Trending audio boosts algorithmic reach.",
+  "Edit readiness": "How close this footage is to being ready to post based on structure, pacing, and visual flow.",
+};
+
 const platformBg = (id) => {
   if (id === "tiktok") return "#010101";
   if (id === "instagram") return "linear-gradient(135deg,#f09433,#e6683c,#dc2743,#cc2366,#bc1888)";
@@ -47,30 +55,39 @@ const PlatformIcon = ({ id, size = 15 }) => {
   );
 };
 
+function Tooltip({ text }) {
+  const [show, setShow] = useState(false);
+  return (
+    <span style={{ position: "relative", display: "inline-block", marginLeft: 4 }}>
+      <span
+        onMouseEnter={() => setShow(true)}
+        onMouseLeave={() => setShow(false)}
+        onClick={() => setShow(s => !s)}
+        style={{ cursor: "pointer", color: "#aaa", fontSize: 10, border: "1px solid #ccc", borderRadius: "50%", width: 13, height: 13, display: "inline-flex", alignItems: "center", justifyContent: "center", fontWeight: 600, lineHeight: 1 }}
+      >i</span>
+      {show && (
+        <div style={{ position: "absolute", bottom: "120%", left: "50%", transform: "translateX(-50%)", background: "#1a1a1a", color: "#fff", fontSize: 11, padding: "8px 10px", borderRadius: 7, width: 210, lineHeight: 1.6, zIndex: 100, pointerEvents: "none" }}>
+          {text}
+          <div style={{ position: "absolute", top: "100%", left: "50%", transform: "translateX(-50%)", width: 0, height: 0, borderLeft: "5px solid transparent", borderRight: "5px solid transparent", borderTop: "5px solid #1a1a1a" }} />
+        </div>
+      )}
+    </span>
+  );
+}
+
 function ScoreBar({ score, color, animate }) {
   return (
     <div style={{ flex: 1, height: 6, background: "rgba(128,128,128,0.15)", borderRadius: 10, overflow: "hidden" }}>
-      <div style={{
-        height: "100%",
-        width: animate ? `${score}%` : "0%",
-        background: color,
-        borderRadius: 10,
-        transition: "width 1.2s cubic-bezier(.4,0,.2,1)",
-      }} />
+      <div style={{ height: "100%", width: animate ? `${score}%` : "0%", background: color, borderRadius: 10, transition: "width 1.2s cubic-bezier(.4,0,.2,1)" }} />
     </div>
   );
 }
 
-// Secure proxy call — API key never exposed to browser
 async function callAI(prompt) {
   const response = await fetch('/api/analyse', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      model: 'claude-sonnet-4-20250514',
-      max_tokens: 1000,
-      messages: [{ role: 'user', content: prompt }],
-    }),
+    body: JSON.stringify({ model: 'claude-sonnet-4-20250514', max_tokens: 1000, messages: [{ role: 'user', content: prompt }] }),
   });
   const data = await response.json();
   const text = data.content?.map(b => b.text || '').join('') || '';
@@ -113,6 +130,25 @@ Respond ONLY with JSON (no markdown):
   return callAI(prompt);
 }
 
+async function getRefreshedHooks(videoInfo, existingHooks) {
+  const existing = existingHooks.map(h => h.text).join(" | ");
+  const prompt = `You are a short-form video strategist. Generate 3 completely different and fresh hook suggestions. Do NOT repeat or rephrase any of these: ${existing}
+
+Video context:
+- Description: "${videoInfo.description || "None provided"}"
+- Niche: ${videoInfo.niche || "general"}
+
+Respond ONLY with JSON (no markdown):
+{
+  "hooks": [
+    { "text": "hook line", "platform": "TikTok", "matchLabel": "High match", "avgViews": "2.1M" },
+    { "text": "hook line", "platform": "Reels", "matchLabel": "Good match", "avgViews": "890K" },
+    { "text": "hook line", "platform": "TikTok", "matchLabel": "Trending style", "avgViews": "1.2M" }
+  ]
+}`;
+  return callAI(prompt);
+}
+
 async function optimiseForPlatform(videoInfo, targetPlatform, currentScore, niche) {
   const prompt = `You are a short-form video strategist. A creator has committed to posting on ${targetPlatform.name} even though their content currently scores ${currentScore}% fit for that platform.
 
@@ -139,6 +175,7 @@ Respond ONLY with JSON (no markdown):
 }
 
 const READY_THRESHOLD = 75;
+const FREE_ANALYSES = 5;
 
 export default function ReelIQ() {
   const [uploadType, setUploadType] = useState("final");
@@ -150,6 +187,7 @@ export default function ReelIQ() {
   const [results, setResults] = useState(null);
   const [previousScore, setPreviousScore] = useState(null);
   const [analyseCount, setAnalyseCount] = useState(0);
+  const [totalAnalyses, setTotalAnalyses] = useState(0);
   const [error, setError] = useState(null);
   const [hookTab, setHookTab] = useState("ai");
   const [userHook, setUserHook] = useState("");
@@ -160,7 +198,11 @@ export default function ReelIQ() {
   const [optimising, setOptimising] = useState(false);
   const [optimisationResult, setOptimisationResult] = useState(null);
   const [showOptimise, setShowOptimise] = useState(false);
+  const [refreshingHooks, setRefreshingHooks] = useState(false);
   const fileRef = useRef(null);
+
+  const analysesRemaining = FREE_ANALYSES - totalAnalyses;
+  const hitPaywall = analysesRemaining <= 0;
 
   const processFile = useCallback((f) => {
     if (!f || !f.type.startsWith("video/")) { setError("Please upload a video file (MP4, MOV, etc.)"); return; }
@@ -179,22 +221,23 @@ export default function ReelIQ() {
     v.onerror = () => resolve("unknown");
   });
 
-  const videoInfo = () => ({ name: file?.name, duration: "", size: formatSize(file?.size || 0), type: file?.type, uploadType, description: description.trim() });
+  const getVideoInfo = () => ({ name: file?.name, size: formatSize(file?.size || 0), type: file?.type, uploadType, description: description.trim(), niche: results?.niche || "" });
 
   const topScore = results ? Math.max(...PLATFORMS.map(p => results.platforms[p.id]?.score || 0)) : 0;
   const isReadyToPost = topScore >= READY_THRESHOLD;
 
   const analyse = async () => {
-    if (!file) return;
+    if (!file || hitPaywall) return;
     setAnalysing(true); setError(null); setScoresVisible(false);
     setOptimisationResult(null); setShowOptimise(false); setOptimiseTarget(null);
     try {
       const duration = await getVideoDuration(videoUrl);
-      const info = { ...videoInfo(), duration };
+      const info = { ...getVideoInfo(), duration };
       const data = await analyseWithClaude(info, "");
       if (results) setPreviousScore(topScore);
       setResults(data);
       setAnalyseCount(c => c + 1);
+      setTotalAnalyses(c => c + 1);
       setTimeout(() => setScoresVisible(true), 100);
     } catch (e) { setError("Analysis failed. Please try again."); }
     finally { setAnalysing(false); }
@@ -205,11 +248,21 @@ export default function ReelIQ() {
     setScoringHook(true);
     try {
       const duration = await getVideoDuration(videoUrl);
-      const info = { ...videoInfo(), duration };
+      const info = { ...getVideoInfo(), duration };
       const data = await analyseWithClaude(info, userHook.trim());
       if (data.userHookScore) setHookScore(data.userHookScore);
     } catch (e) { setError("Scoring failed."); }
     finally { setScoringHook(false); }
+  };
+
+  const handleRefreshHooks = async () => {
+    if (!results?.hooks) return;
+    setRefreshingHooks(true);
+    try {
+      const data = await getRefreshedHooks(getVideoInfo(), results.hooks);
+      setResults(prev => ({ ...prev, hooks: data.hooks }));
+    } catch (e) { setError("Refresh failed. Try again."); }
+    finally { setRefreshingHooks(false); }
   };
 
   const runOptimisation = async () => {
@@ -217,10 +270,9 @@ export default function ReelIQ() {
     setOptimising(true); setOptimisationResult(null);
     try {
       const duration = await getVideoDuration(videoUrl);
-      const info = { ...videoInfo(), duration };
+      const info = { ...getVideoInfo(), duration };
       const platform = PLATFORMS.find(p => p.id === optimiseTarget);
-      const currentScore = results.platforms[optimiseTarget]?.score || 0;
-      const data = await optimiseForPlatform(info, platform, currentScore, results.niche);
+      const data = await optimiseForPlatform(info, platform, results.platforms[optimiseTarget]?.score || 0, results.niche);
       setOptimisationResult(data);
     } catch (e) { setError("Optimisation failed. Please try again."); }
     finally { setOptimising(false); }
@@ -250,17 +302,40 @@ export default function ReelIQ() {
   return (
     <div style={{ fontFamily: "'DM Sans','Helvetica Neue',sans-serif", maxWidth: 940, margin: "0 auto", padding: "1.5rem 1rem" }}>
       <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,wght@0,400;0,500;0,600;1,400&display=swap" rel="stylesheet" />
+      <style>{`@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }`}</style>
 
+      {/* Header */}
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "1.75rem" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
           <div style={{ width: 32, height: 32, borderRadius: 10, background: "#534AB7", display: "flex", alignItems: "center", justifyContent: "center" }}>
             <svg width="17" height="17" viewBox="0 0 24 24" fill="white"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
           </div>
-          <span style={{ fontSize: 18, fontWeight: 600, color: "#1a1a1a", letterSpacing: "-0.4px" }}>reel<span style={{ color: "#534AB7" }}>IQ</span></span>
+          <span style={{ fontSize: 18, fontWeight: 600, color: "#1a1a1a", letterSpacing: "-0.4px" }}>
+            Reel<span style={{ color: "#534AB7" }}>.</span><span style={{ color: "#534AB7" }}>IQ</span>
+          </span>
         </div>
-        <span style={{ fontSize: 11, background: "#EEEDFE", color: "#3C3489", padding: "3px 10px", borderRadius: 20, fontWeight: 500 }}>Beta</span>
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          {!hitPaywall && totalAnalyses > 0 && (
+            <span style={{ fontSize: 11, color: "#888" }}>{analysesRemaining} free {analysesRemaining === 1 ? "analysis" : "analyses"} left</span>
+          )}
+          <span style={{ fontSize: 11, background: "#EEEDFE", color: "#3C3489", padding: "3px 10px", borderRadius: 20, fontWeight: 500 }}>Beta</span>
+        </div>
       </div>
 
+      {/* Paywall banner */}
+      {hitPaywall && (
+        <div style={{ background: "#534AB7", borderRadius: 12, padding: "16px 20px", marginBottom: 14, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+          <div>
+            <div style={{ fontSize: 14, fontWeight: 600, color: "#fff", marginBottom: 3 }}>You've used your 5 free analyses this month</div>
+            <div style={{ fontSize: 12, color: "rgba(255,255,255,0.8)" }}>Upgrade to Pro for unlimited analyses, platform optimisation, hook scoring and more.</div>
+          </div>
+          <button style={{ background: "#fff", color: "#534AB7", border: "none", borderRadius: 8, padding: "9px 18px", fontSize: 13, fontWeight: 600, cursor: "pointer", whiteSpace: "nowrap" }}>
+            Upgrade to Pro — A$29/mo
+          </button>
+        </div>
+      )}
+
+      {/* Ready to post banner */}
       {results && isReadyToPost && (
         <div style={{ background: "#E1F5EE", border: "1px solid #9FE1CB", borderRadius: 12, padding: "14px 18px", marginBottom: 14, display: "flex", alignItems: "center", gap: 12 }}>
           <div style={{ width: 32, height: 32, borderRadius: "50%", background: "#0F6E56", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
@@ -281,13 +356,12 @@ export default function ReelIQ() {
       {results && analyseCount > 1 && previousScore && !isReadyToPost && (
         <div style={{ background: "#EEEDFE", border: "1px solid #CECBF6", borderRadius: 12, padding: "12px 18px", marginBottom: 14 }}>
           <div style={{ fontSize: 13, color: "#3C3489" }}>
-            {topScore > previousScore
-              ? `Score improved from ${previousScore}% → ${topScore}%. Keep going — one more round of edits should get you there.`
-              : `Score held at ${topScore}%. Focus on the hook and first 3 seconds — that's your biggest lever.`}
+            {topScore > previousScore ? `Score improved from ${previousScore}% → ${topScore}%. Keep going — one more round of edits should get you there.` : `Score held at ${topScore}%. Focus on the hook and first 3 seconds — that's your biggest lever.`}
           </div>
         </div>
       )}
 
+      {/* Upload type selector */}
       <div style={{ ...card, marginBottom: 14 }}>
         <div style={sectionLabel}>What are you uploading?</div>
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
@@ -312,7 +386,10 @@ export default function ReelIQ() {
       </div>
 
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
+        {/* LEFT */}
         <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+
+          {/* Upload card */}
           <div style={card}>
             <div style={sectionLabel}>{isFinal ? "Upload your final edit" : "Upload your raw footage"}</div>
             {!file ? (
@@ -331,7 +408,7 @@ export default function ReelIQ() {
               </div>
             ) : (
               <div style={{ display: "flex", gap: 12, alignItems: "flex-start" }}>
-                <div style={{ width: 68, flexShrink: 0, borderRadius: 8, overflow: "hidden", background: "#1a1a2e", aspectRatio: "9/16", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                <div style={{ width: 68, flexShrink: 0, borderRadius: 8, overflow: "hidden", background: "#1a1a2e", aspectRatio: "9/16" }}>
                   <video src={videoUrl} style={{ width: "100%", height: "100%", objectFit: "cover" }} muted playsInline />
                 </div>
                 <div style={{ flex: 1 }}>
@@ -357,6 +434,15 @@ export default function ReelIQ() {
             {error && <div style={{ marginTop: 8, fontSize: 12, color: "#993C1D", background: "#FAECE7", padding: "6px 10px", borderRadius: 6 }}>{error}</div>}
           </div>
 
+          {/* Hook definition box */}
+          <div style={{ background: "#EEEDFE", border: "0.5px solid #CECBF6", borderRadius: 10, padding: "12px 14px" }}>
+            <div style={{ fontSize: 12, fontWeight: 600, color: "#3C3489", marginBottom: 4 }}>What is a hook?</div>
+            <div style={{ fontSize: 12, color: "#534AB7", lineHeight: 1.6 }}>
+              Your hook is the <strong>first 3 seconds</strong> of your video — not the caption. It's the opening moment that stops someone from scrolling. Strong hooks drive watch time. Weak hooks lose viewers before they start.
+            </div>
+          </div>
+
+          {/* Content insights */}
           {results && (
             <div style={card}>
               <div style={sectionLabel}>Content insights</div>
@@ -369,7 +455,10 @@ export default function ReelIQ() {
                   ...(!isFinal && results.editReadiness ? [{ label: "Edit readiness", val: results.editReadiness }] : []),
                 ].map(item => (
                   <div key={item.label} style={{ background: "#f8f8f6", borderRadius: 8, padding: "10px 12px" }}>
-                    <div style={{ fontSize: 11, color: "#888", marginBottom: 3 }}>{item.label}</div>
+                    <div style={{ fontSize: 11, color: "#888", marginBottom: 3, display: "flex", alignItems: "center" }}>
+                      {item.label}
+                      {INSIGHTS_INFO[item.label] && <Tooltip text={INSIGHTS_INFO[item.label]} />}
+                    </div>
                     <div style={{ fontSize: 13, fontWeight: 500, color: item.good === true ? "#0F6E56" : item.good === false ? "#A32D2D" : "#1a1a1a" }}>{item.val}</div>
                   </div>
                 ))}
@@ -390,7 +479,7 @@ export default function ReelIQ() {
             </div>
           )}
 
-          {file && !isReadyToPost && (
+          {file && !isReadyToPost && !hitPaywall && (
             <button onClick={analyse} disabled={analysing} style={{ width: "100%", background: analysing ? "#AFA9EC" : "#534AB7", color: "#fff", border: "none", borderRadius: 10, padding: "13px", fontSize: 14, fontWeight: 500, cursor: analysing ? "not-allowed" : "pointer", transition: "background 0.2s", display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
               {analysing ? (<><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round"><path d="M21 12a9 9 0 1 1-6.219-8.56"><animateTransform attributeName="transform" type="rotate" from="0 12 12" to="360 12 12" dur="1s" repeatCount="indefinite"/></path></svg>Analysing your {isFinal ? "edit" : "footage"}...</>) : analyseCount === 0 ? `Analyse this ${isFinal ? "video" : "footage"}` : "Re-analyse after edits"}
             </button>
@@ -404,7 +493,10 @@ export default function ReelIQ() {
           )}
         </div>
 
+        {/* RIGHT */}
         <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+
+          {/* Platform scores */}
           <div style={card}>
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
               <div style={sectionLabel}>Platform fit</div>
@@ -477,17 +569,12 @@ export default function ReelIQ() {
                   style={{ width: "100%", background: !optimiseTarget ? "rgba(128,128,128,0.15)" : "#534AB7", color: !optimiseTarget ? "#888" : "#fff", border: "none", borderRadius: 8, padding: "11px", fontSize: 13, fontWeight: 500, cursor: !optimiseTarget ? "not-allowed" : "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8, marginBottom: optimisationResult ? 14 : 0 }}>
                   {optimising ? (<><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round"><path d="M21 12a9 9 0 1 1-6.219-8.56"><animateTransform attributeName="transform" type="rotate" from="0 12 12" to="360 12 12" dur="1s" repeatCount="indefinite"/></path></svg>Optimising...</>) : optimiseTarget ? `Optimise for ${PLATFORMS.find(p => p.id === optimiseTarget)?.short}` : "Select a platform above"}
                 </button>
-
                 {optimisationResult && (
                   <div>
                     <div style={{ background: "#f8f8f6", borderRadius: 8, padding: "12px 14px", marginBottom: 10 }}>
                       <div style={{ fontSize: 11, color: "#888", marginBottom: 6, fontWeight: 500, textTransform: "uppercase", letterSpacing: "0.5px" }}>Platform insight</div>
                       <div style={{ fontSize: 12, color: "#1a1a1a", lineHeight: 1.6 }}>{optimisationResult.platformTip}</div>
-                      {optimisationResult.projectedLift > 0 && (
-                        <div style={{ marginTop: 8 }}>
-                          <span style={{ background: "#E1F5EE", color: "#0F6E56", fontSize: 11, padding: "2px 8px", borderRadius: 20, fontWeight: 500 }}>+{optimisationResult.projectedLift}% projected lift</span>
-                        </div>
-                      )}
+                      {optimisationResult.projectedLift > 0 && <div style={{ marginTop: 8 }}><span style={{ background: "#E1F5EE", color: "#0F6E56", fontSize: 11, padding: "2px 8px", borderRadius: 20, fontWeight: 500 }}>+{optimisationResult.projectedLift}% projected lift</span></div>}
                     </div>
                     <div style={{ marginBottom: 10 }}>
                       <div style={{ fontSize: 11, color: "#888", marginBottom: 8, fontWeight: 500, textTransform: "uppercase", letterSpacing: "0.5px" }}>Hooks rewritten for {PLATFORMS.find(p => p.id === optimiseTarget)?.short}</div>
@@ -506,9 +593,7 @@ export default function ReelIQ() {
                         <div style={{ fontSize: 11, color: "#888", marginBottom: 8, fontWeight: 500, textTransform: "uppercase", letterSpacing: "0.5px" }}>Format tweaks</div>
                         {optimisationResult.formatTips.map((t, i) => (
                           <div key={i} style={{ display: "flex", gap: 8, alignItems: "flex-start", marginBottom: 6 }}>
-                            <div style={{ width: 16, height: 16, borderRadius: "50%", background: "#EEEDFE", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, marginTop: 1 }}>
-                              <span style={{ fontSize: 9, fontWeight: 600, color: "#534AB7" }}>{i + 1}</span>
-                            </div>
+                            <div style={{ width: 16, height: 16, borderRadius: "50%", background: "#EEEDFE", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, marginTop: 1 }}><span style={{ fontSize: 9, fontWeight: 600, color: "#534AB7" }}>{i + 1}</span></div>
                             <div style={{ fontSize: 12, color: "#1a1a1a", lineHeight: 1.5 }}>{t}</div>
                           </div>
                         ))}
@@ -530,6 +615,7 @@ export default function ReelIQ() {
             )}
           </div>
 
+          {/* Hooks */}
           <div style={card}>
             <div style={sectionLabel}>Hook suggestions</div>
             <div style={{ display: "flex", gap: 6, marginBottom: 14 }}>
@@ -541,28 +627,42 @@ export default function ReelIQ() {
             {hookTab === "ai" && (
               !results ? (
                 <div style={{ fontSize: 12, color: "#888", textAlign: "center", padding: "1.5rem 0", lineHeight: 1.7 }}>Analyse your {isFinal ? "video" : "footage"} first<br />to get AI hook suggestions</div>
-              ) : results.hooks?.map((hook, i) => {
-                const mc = matchColor(hook.matchLabel);
-                return (
-                  <div key={i} style={{ background: "#f8f8f6", borderRadius: 8, padding: "12px 13px", marginBottom: 8 }}>
-                    <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 8, marginBottom: 8 }}>
-                      <div style={{ fontSize: 13, color: "#1a1a1a", lineHeight: 1.5, fontStyle: "italic" }}>"{hook.text}"</div>
-                      <button onClick={() => navigator.clipboard?.writeText(hook.text)} style={{ fontSize: 11, color: "#534AB7", fontWeight: 500, cursor: "pointer", background: "transparent", border: "none", whiteSpace: "nowrap" }}>Copy</button>
-                    </div>
-                    <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
-                      <span style={{ background: mc.bg, color: mc.text, fontSize: 10, padding: "2px 7px", borderRadius: 20, fontWeight: 500 }}>{hook.matchLabel}</span>
-                      <span style={{ fontSize: 11, color: "#888" }}>{hook.platform}</span>
-                      <span style={{ width: 3, height: 3, borderRadius: "50%", background: "rgba(0,0,0,0.2)", display: "inline-block" }} />
-                      <span style={{ fontSize: 11, color: "#888" }}>{hook.avgViews} avg views</span>
-                    </div>
-                  </div>
-                );
-              })
+              ) : (
+                <>
+                  {results.hooks?.map((hook, i) => {
+                    const mc = matchColor(hook.matchLabel);
+                    return (
+                      <div key={i} style={{ background: "#f8f8f6", borderRadius: 8, padding: "12px 13px", marginBottom: 8 }}>
+                        <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 8, marginBottom: 8 }}>
+                          <div style={{ fontSize: 13, color: "#1a1a1a", lineHeight: 1.5, fontStyle: "italic" }}>"{hook.text}"</div>
+                          <button onClick={() => navigator.clipboard?.writeText(hook.text)} style={{ fontSize: 11, color: "#534AB7", fontWeight: 500, cursor: "pointer", background: "transparent", border: "none", whiteSpace: "nowrap" }}>Copy</button>
+                        </div>
+                        <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+                          <span style={{ background: mc.bg, color: mc.text, fontSize: 10, padding: "2px 7px", borderRadius: 20, fontWeight: 500 }}>{hook.matchLabel}</span>
+                          <span style={{ fontSize: 11, color: "#888" }}>{hook.platform}</span>
+                          <span style={{ width: 3, height: 3, borderRadius: "50%", background: "rgba(0,0,0,0.2)", display: "inline-block" }} />
+                          <span style={{ fontSize: 11, color: "#888" }}>{hook.avgViews} avg views</span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                  <button onClick={handleRefreshHooks} disabled={refreshingHooks}
+                    style={{ width: "100%", background: "transparent", border: "0.5px solid rgba(0,0,0,0.15)", borderRadius: 8, padding: "9px", fontSize: 12, color: refreshingHooks ? "#aaa" : "#534AB7", fontWeight: 500, cursor: refreshingHooks ? "not-allowed" : "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 6, marginTop: 2 }}>
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ animation: refreshingHooks ? "spin 1s linear infinite" : "none" }}>
+                      <polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/>
+                      <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>
+                    </svg>
+                    {refreshingHooks ? "Getting new hooks..." : "Refresh — get 3 new hooks"}
+                  </button>
+                </>
+              )
             )}
 
             {hookTab === "own" && (
               <div>
-                <div style={{ fontSize: 12, color: "#888", marginBottom: 10, lineHeight: 1.6 }}>Write your hook and we'll score it against high-performing content in your niche.</div>
+                <div style={{ fontSize: 12, color: "#888", marginBottom: 8, lineHeight: 1.6 }}>
+                  Write your hook and we'll score it. Remember — your hook is the <strong style={{ color: "#1a1a1a", fontWeight: 500 }}>first 3 seconds</strong> of your video, not the caption.
+                </div>
                 <textarea value={userHook} onChange={e => setUserHook(e.target.value)} placeholder="e.g. 'Nobody tells you this about filmmaking on a budget...'" rows={3}
                   style={{ width: "100%", background: "#f8f8f6", border: "0.5px solid rgba(0,0,0,0.15)", borderRadius: 8, padding: "10px 12px", fontSize: 12, color: "#1a1a1a", outline: "none", resize: "none", fontFamily: "inherit", lineHeight: 1.6 }} />
                 <button onClick={scoreHook} disabled={!userHook.trim() || !file || scoringHook}
@@ -594,3 +694,5 @@ export default function ReelIQ() {
     </div>
   );
 }
+
+export default App;
