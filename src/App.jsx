@@ -691,6 +691,10 @@ export default function ReelIQ() {
           </div>
         </div>
       </div>
+      <div style={{ textAlign: 'center', padding: '20px', fontSize: 11, color: '#888', borderTop: '1px solid rgba(0,0,0,0.06)', marginTop: 40 }}>
+        <a href="/privacy.html" target="_blank" style={{ color: '#888', marginRight: 16, textDecoration: 'none' }}>Privacy Policy</a>
+        <a href="/terms.html" target="_blank" style={{ color: '#888', textDecoration: 'none' }}>Terms of Service</a>
+      </div>
     </div>
   );
 }
