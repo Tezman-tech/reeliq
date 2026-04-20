@@ -17,3 +17,4 @@ export default async function handler(req, res) {
   res.setHeader('Location', authUrl);
   res.status(302).end();
 }
+
