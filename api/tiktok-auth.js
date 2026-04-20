@@ -4,7 +4,16 @@ export default async function handler(req, res) {
   const scope = 'user.info.basic';
   const state = Math.random().toString(36).substring(7);
 
-  const authUrl = `https://www.tiktok.com/v2/auth/authorize?client_key=${clientKey}&scope=${scope}&response_type=code&redirect_uri=${encodeURIComponent(redirectUri)}&state=${state}`;
+  const params = new URLSearchParams({
+    client_key: clientKey,
+    scope: scope,
+    response_type: 'code',
+    redirect_uri: redirectUri,
+    state: state,
+  });
 
-  res.redirect(authUrl);
+  const authUrl = `https://www.tiktok.com/v2/auth/authorize?${params.toString()}`;
+
+  res.setHeader('Location', authUrl);
+  res.status(302).end();
 }
