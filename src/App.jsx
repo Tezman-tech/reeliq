@@ -200,6 +200,8 @@ export default function ReelIQ() {
   const [showOptimise, setShowOptimise] = useState(false);
   const [refreshingHooks, setRefreshingHooks] = useState(false);
   const fileRef = useRef(null);
+  const [tiktokUser, setTiktokUser] = useState(null); 
+  const [useEffectRan] = useState(() => { const p = new URLSearchParams(window.location.search); if(p.get('tiktok')==='success'){setTimeout(()=>setTiktokUser({name:decodeURIComponent(p.get('name')||'TikTok User'),avatar:decodeURIComponent(p.get('avatar')||'')}),0);} return true; });
 
   const analysesRemaining = FREE_ANALYSES - totalAnalyses;
   const hitPaywall = analysesRemaining <= 0;
@@ -320,6 +322,16 @@ export default function ReelIQ() {
           )}
           <span style={{ fontSize: 11, background: "#EEEDFE", color: "#3C3489", padding: "3px 10px", borderRadius: 20, fontWeight: 500 }}>Beta</span>
         </div>
+        {tiktokUser ? (
+          <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, color: "#534AB7", background: "#EEEDFE", padding: "6px 12px", borderRadius: 20 }}>
+            {tiktokUser.avatar && <img src={tiktokUser.avatar} style={{ width: 20, height: 20, borderRadius: "50%" }} />}
+            <span>{tiktokUser.name}</span>
+          </div>
+        ) : (
+          <a href="/auth/tiktok" style={{ fontSize: 12, color: "#534AB7", background: "#EEEDFE", padding: "6px 14px", borderRadius: 20, textDecoration: "none", fontWeight: 500 }}>
+            Connect TikTok
+          </a>
+        )}
       </div>
 
       {/* Paywall banner */}
